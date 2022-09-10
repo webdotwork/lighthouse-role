@@ -1,20 +1,70 @@
 ---
-# tasks file for lighthouse-role
-  - name: Install dependencies lighthouse
-    ansible.builtin.yum: 
-        name: git
-        state: present
+# tasks file for clickhouse
+- name: 'Include OS Family Specific Variables'
+  include_vars: "{{ lookup('first_found', params) }}"
+  vars:
+    params:
+      files:
+        - "{{ ansible_os_family | lower }}.yml"
+        - 'empty.yml'
+      paths:
+        - 'vars'
+  tags: [always]
 
-  - name: Copy from git lighthouse
-    become: true
-    git:
-      repo: "{{ lighthouse_vcs }}"
-      version: master
-      dest: "{{ lighthouse_location_dir }}"
-  - name: Create lighthouse config
-    become: true
-    template:
-      src: "template/lighthouse.conf.j2"
-      dest: "/etc/nginx/conf.d/default.conf"
-      mode: 0644
-    notify: reload-nginx
+- include_tasks: precheck.yml
+  tags: [always]
+
+- include_tasks: params.yml
+  tags: [always]
+
+- include_tasks:
+    file: "{{ lookup('first_found', params) }}"
+    apply:
+      tags: [install]
+  vars:
+    params:
+      files:
+        - "install/{{ ansible_pkg_mgr }}.yml"
+        - 'empty.yml'
+  tags: [install]
+  when: not clickhouse_remove|bool
+
+- include_tasks: 
+    file: configure/sys.yml
+    apply:
+      tags: [config, config_sys]
+  tags: [config, config_sys]
+  when: not clickhouse_remove|bool
+
+- name: "Notify Handlers Now"
+  meta: flush_handlers
+
+- include_tasks: service.yml
+  tags: [always]
+
+- name: "Wait for Clickhouse Server to Become Ready"
+  wait_for:
+    port: "{{ clickhouse_tcp_secure_port | default(clickhouse_tcp_port) }}"
+    delay: "{{ clickhouse_ready_delay }}"
+  when: not clickhouse_remove|bool
+
+- include_tasks:
+    file: configure/db.yml
+    apply:
+      tags: [config, config_db]
+  tags: [config, config_db]
+  when: not clickhouse_remove|bool
+
+- include_tasks:
+    file: configure/dict.yml
+    apply:
+      tags: [config, config_dict]
+  tags: [config, config_dict]
+  when: not clickhouse_remove|bool
+
+- include_tasks:
+    file: remove.yml
+    apply:
+      tags: [remove]
+  tags: [remove]
+  when: clickhouse_remove|bool
